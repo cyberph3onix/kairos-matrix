@@ -9,19 +9,20 @@
 
 import './shift5.css';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useWalletContext } from '@/app/contexts/WalletContext';
 
 const REPO = 'https://github.com/wolf1276/kairos';
+// The live-data agent app (live Stellar mainnet market + Gemini agents). It's a static page served
+// by a rewrite (/demo → public/demo/index.html), so every link to it must be a full page load,
+// never next/link client navigation.
+const APP_URL = '/demo';
+const openApp = () => { window.location.href = APP_URL; };
 const docUrl = (file: string) => `${REPO}/blob/main/${file}`;
 
 const LANDING_NAV = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/dashboard/agents', label: 'Agents' },
-  { to: '/dashboard/context', label: 'Context' },
+  { to: APP_URL, label: 'Launch App' },
   { to: '/docs', label: 'Docs' },
-  { to: '/demo', label: 'Live Demo' },
 ];
 
 // The stages of Kairos's AI decision pipeline (README → AI Decision Pipeline), in order.
@@ -47,10 +48,10 @@ const HEADLINES = [
 ];
 
 const SOLUTIONS = [
-  { title: 'Smart Wallet', desc: 'A per-owner Soroban account-abstraction wallet, deployed and recovered through sponsored Freighter onboarding. Non-custodial by construction.', href: '/dashboard' },
-  { title: 'Delegation & Policies', desc: 'Scoped, revocable on-chain delegations with composable caveats: spend limits, asset whitelists and time windows, checked at redemption.', href: '/dashboard/agents' },
-  { title: 'AI Decision Pipeline', desc: 'Market → context → memory → reasoning → verified decision. Deterministic everywhere except one LLM call, and every decision is audited and replayable.', accent: true, href: '/dashboard/context' },
-  { title: 'Autonomous Runtime', desc: 'Runs the full pipeline on a schedule against a deterministic paper execution environment, with learning analytics over every outcome.', href: '/dashboard' },
+  { title: 'Smart Wallet', desc: 'A per-owner Soroban account-abstraction wallet, deployed and recovered through sponsored Freighter onboarding. Non-custodial by construction.', href: APP_URL },
+  { title: 'Delegation & Policies', desc: 'Scoped, revocable on-chain delegations with composable caveats: spend limits, asset whitelists and time windows, checked at redemption.', href: APP_URL },
+  { title: 'AI Decision Pipeline', desc: 'Market → context → memory → reasoning → verified decision. Deterministic everywhere except one LLM call, and every decision is audited and replayable.', accent: true, href: APP_URL },
+  { title: 'Autonomous Runtime', desc: 'Runs the full pipeline on a schedule against a deterministic paper execution environment, with learning analytics over every outcome.', href: APP_URL },
 ];
 
 // Real Kairos documentation, dated by its last change in the repo.
@@ -229,7 +230,6 @@ function SolSvg({ idx }: { idx: number }) {
 }
 
 export function LandingPage() {
-  const router = useRouter();
   const wallet = useWalletContext();
 
   const [activeStatus, setActiveStatus] = useState(0);
@@ -329,7 +329,7 @@ export function LandingPage() {
   }
 
   function handleConnect() {
-    if (wallet.connected) { router.push('/dashboard'); return; }
+    if (wallet.connected) { openApp(); return; }
     // Opens Kairos's connect-wallet picker (Freighter etc.), rendered by WalletProvider.
     wallet.connect(true);
   }
@@ -405,8 +405,8 @@ export function LandingPage() {
               <div className="s5-menu-panel" onClick={e => e.stopPropagation()}>
                 <button className="s5-menu-close" onClick={() => setMenuOpen(false)}>✕</button>
                 {LANDING_NAV.map(n => (
-                  n.to === '/demo' ? (
-                    // /demo is a static page (rewritten to public/demo/index.html) — use a hard navigation.
+                  n.to === APP_URL ? (
+                    // Static page — hard navigation (see APP_URL).
                     <a key={n.to} href={n.to} className="s5-menu-nav-link">
                       {n.label}
                     </a>
@@ -510,10 +510,10 @@ export function LandingPage() {
               </div>
             </div>
 
-            <Link href="/dashboard" className="s5-right-cta">
+            <a href={APP_URL} className="s5-right-cta">
               <img src="/landing/arrow.png" alt="" className="s5-cta-arrow-img" />
               <p className="s5-explore-text">Explore the platform.</p>
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -557,7 +557,7 @@ export function LandingPage() {
                     <div className="s5-solution-content">
                       <h3 className="s5-solution-name">{s.title}</h3>
                       <p className="s5-solution-desc">{s.desc}</p>
-                      <button className="s5-explore-btn" onClick={() => router.push(s.href)}>Explore</button>
+                      <button className="s5-explore-btn" onClick={openApp}>Explore</button>
                     </div>
                   </div>
                 );
@@ -632,17 +632,14 @@ export function LandingPage() {
               <div>
                 <h3 className="s5-footer-col-h">Platform</h3>
                 <ul className="s5-footer-col-list">
-                  <li><span className="s5-footer-col-arrow">↳</span><Link href="/dashboard">Dashboard</Link></li>
-                  <li><span className="s5-footer-col-arrow">↳</span><Link href="/dashboard/agents">Agents</Link></li>
-                  <li><span className="s5-footer-col-arrow">↳</span><Link href="/dashboard/context">Context</Link></li>
-                  <li><span className="s5-footer-col-arrow">↳</span><a href="/demo">Live Demo</a></li>
+                  <li><span className="s5-footer-col-arrow">↳</span><a href={APP_URL}>Launch App</a></li>
                 </ul>
               </div>
               <div>
                 <h3 className="s5-footer-col-h">Features<sup>4</sup></h3>
                 <ul className="s5-footer-col-list">
                   {SOLUTIONS.map((s) => (
-                    <li key={s.title}><span className="s5-footer-col-arrow">↳</span><Link href={s.href}>{s.title}</Link></li>
+                    <li key={s.title}><span className="s5-footer-col-arrow">↳</span><a href={s.href}>{s.title}</a></li>
                   ))}
                 </ul>
               </div>
