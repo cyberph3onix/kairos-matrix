@@ -17,6 +17,7 @@ import { createBenchmarkRouter } from './routes/benchmark.js';
 import { buildReportBundle } from './benchmarkReports/index.js';
 import { createDevRouter } from './routes/dev.js';
 import { requireAuth, requireDev } from './authMiddleware.js';
+import { createDemoPipelineRouter } from './routes/demoPipeline.js';
 import { startScheduler } from './runner.js';
 import { initRuntime, getRuntime } from './runtime/runtimeSingleton.js';
 import { startContextMonitor } from './agentContext/monitor.js';
@@ -43,6 +44,9 @@ app.use('/api/dashboard', createDashboardRouter({ getRuntime }));
 // Benchmark API (Phase 10) — read-only latest/history/comparison/reports over Benchmark Core.
 app.use('/api/benchmark', createBenchmarkRouter({ buildReportBundle }));
 app.use('/api/auth', authRouter);
+// Public, paper/testnet-only demo of the real pipeline (SSE) — see routes/demoPipeline.ts. Must stay
+// above the broad `/api` requireAuth mounts below.
+app.use('/api/pipeline', createDemoPipelineRouter());
 // Public — must be registered before the broad `/api` requireAuth mount below, otherwise that
 // middleware runs first and 401s every unauthenticated strategies fetch (the frontend's
 // listStrategies sends no bearer token).

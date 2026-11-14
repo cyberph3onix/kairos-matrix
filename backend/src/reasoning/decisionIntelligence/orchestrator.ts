@@ -68,7 +68,7 @@ export async function generateDecisionIntelligence(
       const modelOutput = parseStrictJson(response.raw);
       const decision = normalizeToDecisionIntelligence({
         modelOutput,
-        providerVersion: `${config.provider}:${config.model}`,
+        providerVersion: `${config.provider}:${response.model ?? config.model}`,
         reasoningDurationMs,
         promptHash: prompt.promptHash,
       });

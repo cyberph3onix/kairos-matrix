@@ -44,6 +44,14 @@ export interface BuildContextOptions {
   intervalSeconds?: number;
   /** Skip the feature cache and force a fresh computation for this build. */
   forceRefresh?: boolean;
+  /** Overrides the agent's role-derived allowedProtocols for this build (included in the context
+   *  hash like any other policy field). Used by the public paper-only demo pipeline, whose agent has
+   *  no role-based protocol grant; production callers leave it unset. */
+  allowedProtocols?: string[];
+  /** Paper-only demo overlay: reports delegation + protocol execution as available (and tags
+   *  system.featureFlags.paperDemoOverlay so it is visible in the snapshot and its hash). Only the
+   *  public paper pipeline sets this; nothing it enables can move funds (replay execution). */
+  paperDemoOverlay?: boolean;
 }
 
 export { AGENT_CONTEXT_SCHEMA_VERSION };
@@ -122,14 +130,21 @@ async function buildAgentContextInner(agentId: string, options: BuildContextOpti
 
   if (options.forceRefresh) await getFeatureCacheProvider().invalidate(cacheKey(agentId, pair));
 
-  const result = await buildFeatureResult(row, pair, intervalSeconds, { useCache: !options.forceRefresh });
-  if (!result) return null;
+  const builtResult = await buildFeatureResult(row, pair, intervalSeconds, { useCache: !options.forceRefresh });
+  if (!builtResult) return null;
+  const result = options.paperDemoOverlay
+    ? { ...builtResult, featureSet: { ...builtResult.featureSet, wallet: { ...builtResult.featureSet.wallet, delegationActive: true } } }
+    : builtResult;
 
   const now = Date.now();
   const market = buildMarketContextView(result, intervalSeconds, now);
   const capital = buildManagedCapitalContextView(row, result, now);
-  const policy = buildPolicyContextView(row, result);
-  const system = buildSystemContextView(row, result, intervalSeconds, now);
+  const basePolicy = buildPolicyContextView(row, result);
+  const policy = options.allowedProtocols ? { ...basePolicy, allowedProtocols: [...options.allowedProtocols] } : basePolicy;
+  const baseSystem = buildSystemContextView(row, result, intervalSeconds, now);
+  const system = options.paperDemoOverlay
+    ? { ...baseSystem, agentRunning: true, executionAvailable: baseSystem.oracleHealthy && baseSystem.schedulerRunning, protocolExecutionAvailable: true, featureFlags: { ...baseSystem.featureFlags, protocolExecutionEnabled: true, paperDemoOverlay: true } }
+    : baseSystem;
   const historical = buildHistoricalContextView(row, now);
   const validation = validateAgentContext({ market, capital, policy, system, schemaVersion: AGENT_CONTEXT_SCHEMA_VERSION });
   // Derive status from validation.errors directly (not validation.ok) so there is exactly one

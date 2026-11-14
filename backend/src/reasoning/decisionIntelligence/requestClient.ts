@@ -6,6 +6,7 @@
 import { randomUUID } from 'crypto';
 import { ProviderError, classifyHttpStatus } from '../providers/errors.js';
 import { DECISION_INTELLIGENCE_JSON_SCHEMA } from './schema.js';
+import { geminiGenerate, geminiModelList, GeminiCallError } from '../../geminiRotation.js';
 import type { Prompt } from '../types.js';
 import type { ProviderCallConfig, ProviderName } from '../providers/types.js';
 
@@ -49,6 +50,8 @@ export interface DecisionIntelligenceRawResponse {
   completionTokens: number;
   totalTokens: number;
   requestId: string;
+  /** Model that actually served the request (set by the Gemini rotation path). */
+  model?: string;
 }
 
 function promptToMessages(prompt: Prompt): { role: 'system' | 'user'; content: string }[] {
@@ -91,6 +94,7 @@ export async function requestDecisionIntelligenceCompletion(
   signal: AbortSignal
 ): Promise<DecisionIntelligenceRawResponse> {
   const errProvider = asProviderErrorProvider(config.provider);
+  if (config.provider === 'gemini' && !config.baseUrl) return requestGeminiNative(config, prompt, signal);
   const baseUrl = config.baseUrl ?? DEFAULT_BASE_URLS[config.provider];
   const requestId = randomUUID();
   const body: Record<string, unknown> = {
@@ -155,4 +159,64 @@ export async function requestDecisionIntelligenceCompletion(
     totalTokens: json.usage?.total_tokens ?? 0,
     requestId: json.id ?? requestId,
   };
+}
+
+/** Gemini path: native generateContent with model rotation (GEMINI_MODELS) so a free-tier 429 on
+ *  one model (20 requests/day each) rotates to the next instead of failing the cycle. The model
+ *  list is led by config.model when it is explicitly set to something not in the list. */
+async function requestGeminiNative(
+  config: DecisionIntelligenceProviderConfig,
+  prompt: Prompt,
+  signal: AbortSignal
+): Promise<DecisionIntelligenceRawResponse> {
+  const [system, user] = promptToMessages(prompt);
+  const models = [...new Set([config.model, ...geminiModelList()])];
+  try {
+    const r = await geminiGenerate({
+      apiKey: config.apiKey,
+      system: system.content,
+      user: user.content,
+      json: true,
+      responseJsonSchema: config.structuredOutput ? schemaWithAllowedEnums(prompt) : undefined,
+      models,
+      maxOutputTokens: config.maxTokens,
+      temperature: config.temperature,
+      timeoutMs: Math.min(config.timeoutMs, 45_000),
+    });
+    return {
+      raw: r.text,
+      promptTokens: r.usage.promptTokens,
+      completionTokens: r.usage.completionTokens,
+      totalTokens: r.usage.totalTokens,
+      requestId: `gemini-${Date.now()}`,
+      model: r.model,
+    };
+  } catch (err) {
+    if (signal.aborted) throw new ProviderError('timeout', 'gemini', 'request aborted');
+    if (err instanceof GeminiCallError) {
+      const kind = ({ rate_limit: 'rate_limit', model_unavailable: 'model_unavailable', provider_unavailable: 'provider_unavailable', timeout: 'timeout', authentication: 'authentication', invalid_request: 'network', network: 'network', empty_response: 'empty_response' } as const)[err.kind];
+      throw new ProviderError(kind, 'gemini', err.message);
+    }
+    throw err;
+  }
+}
+
+/** Clones the decision schema and constrains `protocol`/`asset` to the effective allowed sets (the
+ *  same intersection reasoning/validation.ts::deriveAllowedPolicy enforces), read back from the
+ *  prompt's own "Allowed Protocols" section. Gemini enforces enums, so a HOLD can't name 'none'. */
+function schemaWithAllowedEnums(prompt: Prompt): Record<string, unknown> {
+  const schema = JSON.parse(JSON.stringify(DECISION_INTELLIGENCE_JSON_SCHEMA.schema)) as any;
+  try {
+    const a = JSON.parse(prompt.sections.allowedProtocols) as Record<string, string[]>;
+    const inter = (x: string[] = [], y: string[] = []) => x.filter((v) => y.some((w) => w.toLowerCase() === v.toLowerCase()));
+    const protocols = inter(a.agentAllowedProtocols, a.userAllowedProtocols);
+    const assets = inter(a.agentAllowedAssets, a.userAllowedAssets);
+    for (const target of [schema.properties.primaryDecision, schema.properties.alternatives.items]) {
+      if (protocols.length) target.properties.protocol.enum = protocols;
+      if (assets.length) target.properties.asset.enum = assets;
+    }
+  } catch {
+    /* prompt shape unexpected — fall back to the unconstrained schema */
+  }
+  return schema;
 }

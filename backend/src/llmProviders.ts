@@ -5,7 +5,7 @@
 // Hugging Face has been removed as a provider: its inference API requires per-model routing that
 // kept breaking independently of the other providers (see prior "Invalid username or password"
 // failures), and OpenRouter already fronts free-tier equivalents of the same open models.
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { geminiGenerate, GeminiCallError, geminiModelList } from './geminiRotation.js';
 import { getGeminiApiKey } from './config.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -14,13 +14,6 @@ const GPT_OSS_MODEL = 'openai/gpt-oss-20b:free';
 const NVIDIA_MODEL = 'nvidia/nemotron-nano-9b-v2:free';
 // gemini-2.5-flash is deprecated (closed to new keys, re-routed Dec 1 2026), so the default is a
 // current model; override with GEMINI_MODEL.
-const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
-/** Tried after the primary model on a 503 ("high demand") or 404 — both observed transiently on
- *  current Gemini models under load. */
-const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
-function geminiModel(): string {
-  return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-}
 // Gemini 3.x are thinking models: thought tokens count against maxOutputTokens (observed ~260
 // thought tokens for a short decision prompt), so they need far more headroom than the 700 the
 // OpenRouter models get, and a longer timeout under load.
@@ -187,30 +180,26 @@ const geminiProvider: ProviderAdapter = {
   async call(system, user) {
     const key = getGeminiApiKey();
     if (!key) throw new ProviderCallError('authentication', 'GEMINI_API_KEY unset');
-    const client = new GoogleGenerativeAI(key);
-    const models = [...new Set([geminiModel(), GEMINI_FALLBACK_MODEL])];
-    let lastError: ProviderCallError = new ProviderCallError('network', 'Gemini never attempted');
-    for (const modelId of models) {
-      const model = client.getGenerativeModel({
-        model: modelId,
-        systemInstruction: system,
-        generationConfig: { maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS, temperature: 0.2 },
+    try {
+      const r = await geminiGenerate({
+        apiKey: key,
+        system,
+        user,
+        json: true,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        temperature: 0.2,
+        timeoutMs: GEMINI_TIMEOUT_MS,
+        onEvent: log,
       });
-      try {
-        const res = await withTimeout(model.generateContent(user), GEMINI_TIMEOUT_MS);
-        const content = res.response.text();
-        if (!content) throw new ProviderCallError('malformed_response', `empty response from Gemini (${modelId})`);
-        lastGeminiModelUsed = modelId;
-        return content;
-      } catch (err) {
-        lastError = classifyError(err);
-        const status = (err as { status?: number })?.status;
-        const modelLevelFailure = status === 404 || status === 503 || lastError.kind === 'provider_unavailable' || lastError.kind === 'timeout';
-        if (!modelLevelFailure) break;
-        log('gemini_model_failed', { model: modelId, reason: lastError.kind });
+      lastGeminiModelUsed = r.model;
+      return r.text;
+    } catch (err) {
+      if (err instanceof GeminiCallError) {
+        const kind: FailureKind = ({ rate_limit: 'rate_limit', model_unavailable: 'provider_unavailable', provider_unavailable: 'provider_unavailable', timeout: 'timeout', authentication: 'authentication', invalid_request: 'invalid_request', network: 'network', empty_response: 'malformed_response' } as const)[err.kind];
+        throw new ProviderCallError(kind, err.message);
       }
+      throw err;
     }
-    throw lastError;
   },
 };
 
@@ -258,7 +247,7 @@ export interface ChatResult {
 /** Human-readable label for a provider name as returned in ChatResult.provider (adds the model
  *  id for Gemini, whose model is env-configurable). */
 export function describeProvider(provider: string): string {
-  return provider === 'gemini' ? `gemini (${lastGeminiModelUsed ?? geminiModel()})` : provider;
+  return provider === 'gemini' ? `gemini (${lastGeminiModelUsed ?? geminiModelList()[0]})` : provider;
 }
 
 /** Runs one provider through its own retry budget. `validate` lets a caller reject a
