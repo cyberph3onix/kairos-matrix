@@ -16,7 +16,7 @@ const REPO = 'https://github.com/wolf1276/kairos';
 // The live-data agent app (live Stellar mainnet market + Gemini agents). It's a static page served
 // by a rewrite (/demo → public/demo/index.html), so every link to it must be a full page load,
 // never next/link client navigation.
-const APP_URL = '/dashboard';
+const APP_URL = '/demo';
 const openApp = () => { window.location.href = APP_URL; };
 const docUrl = (file: string) => `${REPO}/blob/main/${file}`;
 

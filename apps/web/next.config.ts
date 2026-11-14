@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   transpilePackages: ["three", "@react-three/fiber", "shadergradient"],
   async redirects() {
-    return [{ source: "/app", destination: "/dashboard", permanent: false }];
+    return [{ source: "/app", destination: "/demo", permanent: false }];
   },
   async rewrites() {
     // The live demo is a static page (public/demo/index.html) served at /demo, so the root
