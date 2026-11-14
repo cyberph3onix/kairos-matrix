@@ -85,12 +85,12 @@ export function Navbar() {
             >
               GitHub
             </a>
-            <Link
-              href="/dashboard"
+            <a
+              href="/demo"
               className="inline-flex h-7 md:h-8 items-center rounded-full bg-white px-3 md:px-4 text-[10px] font-semibold text-black transition duration-500 hover:bg-white/90"
             >
               Launch App
-            </Link>
+            </a>
           </>
         )}
 
@@ -101,6 +101,8 @@ export function Navbar() {
               <button
                 onClick={() => wallet.connect()}
                 disabled={wallet.connecting}
+                aria-label="Connect Freighter"
+                title="Connect Freighter (Testnet)"
                 className="inline-flex h-7 md:h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 md:px-4 text-xs font-medium text-white/70 transition-all duration-200 hover:bg-white/[0.08] hover:text-white disabled:opacity-50"
               >
                 {wallet.connecting ? (
