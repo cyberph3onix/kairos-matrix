@@ -1,0 +1,468 @@
+import { test, expect, Page } from '@playwright/test';
+import { Keypair, TransactionBuilder, Asset, Address, Operation, BASE_FEE, rpc, nativeToScVal } from '@stellar/stellar-sdk';
+import crypto from 'crypto';
+import { execSync } from 'child_process';
+import path from 'path';
+
+const SOROBAN_RPC_URL = 'https://soroban-testnet.stellar.org';
+const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
+
+// Mirrors app/lib/stellar.ts's transferXLMToContract — funds a deployed smart-wallet
+// contract (C-address) via the native XLM SAC `transfer`, since classic Operation.payment
+// only supports G-address destinations. Signed directly by the owner keypair (real Ed25519,
+// no Freighter round-trip needed since this runs in Node, not the browser).
+async function fundSmartWalletContract(ownerKp: Keypair, destination: string, amount: string) {
+  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const account = await server.getAccount(ownerKp.publicKey());
+  const nativeSacId = Asset.native().contractId(NETWORK_PASSPHRASE);
+  const stroops = (BigInt(Math.round(parseFloat(amount) * 1e7))).toString();
+  const transferOp = Operation.invokeContractFunction({
+    contract: nativeSacId,
+    function: 'transfer',
+    args: [
+      Address.fromString(ownerKp.publicKey()).toScVal(),
+      Address.fromString(destination).toScVal(),
+      nativeToScVal(BigInt(stroops), { type: 'i128' }),
+    ],
+  });
+  const builtTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    .addOperation(transferOp)
+    .setTimeout(30)
+    .build();
+  const simulated = await server.simulateTransaction(builtTx);
+  if (!rpc.Api.isSimulationSuccess(simulated)) {
+    const reason = rpc.Api.isSimulationError(simulated) ? simulated.error : 'unknown simulation error';
+    throw new Error(`Failed to simulate smart wallet funding: ${reason}`);
+  }
+  const assembled = rpc.assembleTransaction(builtTx, simulated).build();
+  assembled.sign(ownerKp);
+  const sendResponse = await server.sendTransaction(assembled);
+  if (sendResponse.status === 'ERROR') {
+    throw new Error('Failed to submit smart wallet funding transaction');
+  }
+  let status = sendResponse.status;
+  let hash = sendResponse.hash;
+  for (let i = 0; i < 15 && status !== 'SUCCESS'; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const res = await server.getTransaction(hash);
+    status = res.status as string;
+    if (status === 'FAILED') throw new Error('Smart wallet funding transaction failed');
+  }
+  if (status !== 'SUCCESS') throw new Error(`Smart wallet funding did not confirm, last status=${status}`);
+  return hash;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live QA of the Agent Creation flow against the REAL running backend (4001) and
+// REAL Stellar testnet. Freighter itself can't be automated headlessly, so this
+// emulates the Freighter browser extension's actual content-script protocol:
+// @stellar/freighter-api (which @creit.tech/stellar-wallets-kit's FreighterModule
+// calls into) talks to the real extension purely via `window.postMessage` with
+// `source: "FREIGHTER_EXTERNAL_MSG_REQUEST"` / `"FREIGHTER_EXTERNAL_MSG_RESPONSE"`
+// envelopes (see @stellar/freighter-api's build/index.min.js) — there is no chunk
+// to intercept and no `window.freighterApi` object to stub; the extension injects
+// nothing but a content-script message listener plus `window.freighter = true`.
+//
+// NOTE: an earlier version of this file tried to replace the webpack chunk that
+// bundles the freighter module (`page.route(/freighter_module/i, ...)`) with a
+// hand-written ESM shim. That assumed webpack's per-chunk `export` syntax; this
+// app runs on Next.js 16 with Turbopack, whose dev-server chunk format is not
+// plain top-level ESM the way the shim assumed, so the browser choked on the
+// injected chunk with `Unexpected token 'export'` before anything downstream of
+// Connect Wallet could run. Stubbing the extension's actual message protocol
+// (via `page.addInitScript`) sidesteps bundler chunk formats entirely, so it
+// works the same under webpack or Turbopack.
+//
+// Signing itself is REAL Ed25519 crypto via a fresh, friendbot-funded testnet
+// keypair, done in Node and returned into the page through `page.exposeFunction`
+// — i.e. signatures are cryptographically real, verified server-side by the same
+// authService.ts / custom-account contract code path a real user would hit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DB_PATH = path.resolve(__dirname, '../../../backend/data/agents.db');
+function sqlite(query: string): string {
+  return execSync(`sqlite3 "${DB_PATH}" "${query}"`).toString().trim();
+}
+
+const kp = Keypair.random();
+const PUBKEY = kp.publicKey();
+
+async function fundTestnetAccount(pubkey: string) {
+  const res = await fetch(`https://friendbot.stellar.org/?addr=${pubkey}`);
+  return res.ok;
+}
+
+async function installRealSigningFreighterMock(page: Page) {
+  // Exposed Node-side signing functions — real Ed25519 crypto, not fakes.
+  await page.exposeFunction('__kairosGetAddress', () => PUBKEY);
+  await page.exposeFunction('__kairosSignMessage', (message: string) => {
+    // Mirrors backend/src/authService.ts sep53Digest() exactly.
+    const digest = crypto.createHash('sha256').update(`Stellar Signed Message:\n${message}`, 'utf8').digest();
+    return kp.sign(digest).toString('base64');
+  });
+  await page.exposeFunction('__kairosSignTransaction', (xdrStr: string, networkPassphrase: string) => {
+    const tx = TransactionBuilder.fromXDR(xdrStr, networkPassphrase);
+    tx.sign(kp);
+    return tx.toXDR();
+  });
+  await page.exposeFunction('__kairosSignAuthEntry', (preimageXdrB64: string) => {
+    const raw = Buffer.from(preimageXdrB64, 'base64');
+    const hash = crypto.createHash('sha256').update(raw).digest();
+    return kp.sign(hash).toString('base64');
+  });
+
+  // Emulate the real Freighter extension's content-script protocol, which
+  // @stellar/freighter-api talks to purely via window.postMessage — see comment
+  // at top of file for why (Turbopack chunk-format mismatch with the previous
+  // webpack-chunk-replacement approach).
+  await page.addInitScript(() => {
+    // Short-circuits @stellar/freighter-api's isConnected() to true synchronously,
+    // matching what the real extension's content script sets on injection.
+    (window as any).freighter = true;
+
+    window.addEventListener('message', async (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.source !== 'FREIGHTER_EXTERNAL_MSG_REQUEST') return;
+      const { messageId, type } = data;
+      const reply = (fields: Record<string, unknown>) => {
+        window.postMessage(
+          { source: 'FREIGHTER_EXTERNAL_MSG_RESPONSE', messagedId: messageId, ...fields },
+          window.location.origin
+        );
+      };
+
+      const w = window as any;
+      try {
+        switch (type) {
+          case 'REQUEST_ACCESS':
+          case 'REQUEST_PUBLIC_KEY': {
+            const publicKey = await w.__kairosGetAddress();
+            reply({ publicKey });
+            break;
+          }
+          case 'REQUEST_ALLOWED_STATUS': {
+            reply({ isAllowed: true });
+            break;
+          }
+          case 'REQUEST_CONNECTION_STATUS': {
+            reply({ isConnected: true });
+            break;
+          }
+          case 'REQUEST_NETWORK_DETAILS': {
+            reply({
+              networkDetails: {
+                network: 'TESTNET',
+                networkPassphrase: 'Test SDF Network ; September 2015',
+              },
+            });
+            break;
+          }
+          case 'SUBMIT_TRANSACTION': {
+            const signedTransaction = await w.__kairosSignTransaction(
+              data.transactionXdr,
+              data.networkPassphrase
+            );
+            const signerAddress = await w.__kairosGetAddress();
+            reply({ signedTransaction, signerAddress });
+            break;
+          }
+          case 'SUBMIT_BLOB': {
+            const signedBlob = await w.__kairosSignMessage(
+              typeof data.blob === 'string' ? data.blob : ''
+            );
+            const signerAddress = await w.__kairosGetAddress();
+            reply({ signedBlob, signerAddress });
+            break;
+          }
+          case 'SUBMIT_AUTH_ENTRY': {
+            const signedAuthEntry = await w.__kairosSignAuthEntry(data.entryXdr);
+            const signerAddress = await w.__kairosGetAddress();
+            reply({ signedAuthEntry, signerAddress });
+            break;
+          }
+          default:
+            // Unhandled message type — leave unanswered; freighter-api's own
+            // 2s timeout (for connection-status/public-key requests) or the
+            // caller's own timeout will surface it clearly in test output.
+            break;
+        }
+      } catch (e: any) {
+        reply({ apiError: e?.message || String(e) });
+      }
+    });
+  });
+}
+
+async function completeWalletPicker(page: Page) {
+  // ConnectWalletModal: click "Connect Freighter" -> picker modal opens -> click "Freighter"
+  // row -> consent screen -> click "Continue". Uses expect(...).toBeVisible (polling, no
+  // fixed sleeps) since the button may not have hydrated yet right after networkidle.
+  const connectBtn = page.getByRole('button', { name: 'Connect Freighter' });
+  const alreadyConnected = await page.getByRole('button', { name: /^G[A-Z0-9]{3,4}…[A-Z0-9]{3,4}$/ }).isVisible().catch(() => false);
+  if (alreadyConnected) return true;
+  if (!(await connectBtn.isVisible({ timeout: 10_000 }).catch(() => false))) return false;
+  await connectBtn.click();
+  const freighterRow = page.getByRole('listitem').filter({ hasText: 'Freighter' }).getByRole('button');
+  await expect(freighterRow).toBeVisible({ timeout: 5000 });
+  await freighterRow.click({ force: true });
+  const continueBtn = page.getByRole('button', { name: 'Continue' });
+  if (await continueBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await continueBtn.click({ force: true });
+  }
+  // Deterministic signal: wait for the connected-address chip to replace the connect button,
+  // which only renders after SEP-53 challenge/verify + auth token is set.
+  await expect(page.getByRole('button', { name: /^G[A-Z0-9]{3,4}…[A-Z0-9]{3,4}$/ })).toBeVisible({ timeout: 20_000 });
+  return true;
+}
+
+test.describe.serial('Kairos live QA — Agent Creation end-to-end', () => {
+  test.setTimeout(300_000);
+
+  test('0. fund real testnet keypair via friendbot', async () => {
+    const ok = await fundTestnetAccount(PUBKEY);
+    console.log(`[QA] Test keypair: ${PUBKEY} funded=${ok}`);
+    expect(ok).toBeTruthy();
+  });
+
+  test('1-3. Connect wallet, open Agents page, verify no auto wallet popup', async ({ page }) => {
+    const requests: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
+    page.on('request', (r) => requests.push(`${r.method()} ${r.url()}`));
+
+    await installRealSigningFreighterMock(page);
+
+    // Track whether requestAccess/signTransaction/signMessage were called before any
+    // user-initiated click — instrument via a window flag incremented from the shim itself.
+    await page.addInitScript(() => {
+      (window as any).__kairosSignCallLog = [];
+      const origExpose = () => {};
+    });
+
+    await page.goto('http://localhost:3000/dashboard/agents');
+    await page.waitForLoadState('networkidle');
+
+    // Step 3: opening Agents page alone must not trigger any Freighter popup / sign call.
+    // We check this by confirming no auth/session call happened yet (no POST to
+    // /api/auth/challenge or /api/auth/verify) since the app is not "connected" until
+    // the user clicks Connect.
+    const authCallsBeforeConnect = requests.filter((r) => /\/api\/auth\/(challenge|verify)/.test(r));
+    console.log('[QA] Auth calls before Connect click:', authCallsBeforeConnect.length);
+    expect(authCallsBeforeConnect.length).toBe(0);
+
+    await expect(page.getByRole('button', { name: 'Connect Freighter' })).toBeVisible({ timeout: 10_000 });
+
+    // Now perform the actual user-initiated connect.
+    await completeWalletPicker(page);
+
+    const authCallsAfterConnect = requests.filter((r) => /\/api\/auth\/(challenge|verify)/.test(r));
+    console.log('[QA] Auth calls after Connect click:', authCallsAfterConnect);
+    console.log('[QA] Console errors so far:', consoleErrors);
+
+    await page.screenshot({ path: 'test-results/qa-01-after-connect.png', fullPage: true });
+  });
+
+  test('4-9. Open Create Agent wizard through AI Plan step', async ({ page }) => {
+    const responses: string[] = [];
+    page.on('response', (r) => responses.push(`${r.status()} ${r.request().method()} ${r.url()}`));
+    page.on('pageerror', (err) => console.log('[QA] pageerror:', err.message));
+
+    await installRealSigningFreighterMock(page);
+    await page.goto('http://localhost:3000/dashboard/agents');
+    await page.waitForLoadState('networkidle');
+
+    await completeWalletPicker(page);
+
+    await page.screenshot({ path: 'test-results/qa-02-agents-page.png', fullPage: true });
+
+    const createBtn = page.locator('button:has-text("Create Agent")').first();
+    await expect(createBtn).toBeEnabled({ timeout: 20_000 }).catch(async () => {
+      console.log('[QA] Create Agent button not enabled — smart wallet likely not ready.');
+    });
+    await createBtn.click({ trial: false }).catch(() => {});
+    await page.waitForTimeout(1000);
+
+    // Step: Describe Goal
+    const textarea = page.locator('textarea');
+    if (await textarea.isVisible().catch(() => false)) {
+      await textarea.fill('Grow my XLM over the long term while keeping risk low.');
+      await page.screenshot({ path: 'test-results/qa-03-describe-goal.png', fullPage: true });
+      await page.click('text=Analyze');
+      await page.waitForTimeout(3000);
+    }
+
+    await page.screenshot({ path: 'test-results/qa-04-ai-understanding.png', fullPage: true });
+    const parseIntentCalls = responses.filter((r) => r.includes('/api/agents/parse-intent'));
+    console.log('[QA] parse-intent calls:', parseIntentCalls);
+
+    // Step: AI Understanding -> Continue
+    const continueBtn = page.locator('button:has-text("Continue")').first();
+    if (await continueBtn.isVisible().catch(() => false)) {
+      await continueBtn.click();
+      await page.waitForTimeout(500);
+    }
+    await page.screenshot({ path: 'test-results/qa-05-capital-safety.png', fullPage: true });
+
+    // Capital & Safety -> Continue
+    if (await page.locator('button:has-text("Continue")').first().isVisible().catch(() => false)) {
+      await page.click('button:has-text("Continue")');
+      await page.waitForTimeout(500);
+    }
+    await page.screenshot({ path: 'test-results/qa-06-permissions.png', fullPage: true });
+
+    // Permissions -> Continue
+    if (await page.locator('button:has-text("Continue")').first().isVisible().catch(() => false)) {
+      await page.click('button:has-text("Continue")');
+      await page.waitForTimeout(500);
+    }
+    await page.screenshot({ path: 'test-results/qa-07-ai-plan.png', fullPage: true });
+
+    console.log('[QA] All responses so far:', JSON.stringify(responses.filter((r) => r.includes('/api/')), null, 2));
+  });
+
+  test('10-14. Smart wallet, delegation approval, agent creation submit', async ({ page }) => {
+    const responses: { status: number; method: string; url: string; body?: string }[] = [];
+    page.on('response', async (r) => {
+      const url = r.url();
+      if (url.includes('/api/')) {
+        let body: string | undefined;
+        try { body = (await r.text()).slice(0, 500); } catch {}
+        responses.push({ status: r.status(), method: r.request().method(), url, body });
+      }
+    });
+    const consoleErrors: string[] = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+    page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
+
+    await installRealSigningFreighterMock(page);
+    await page.goto('http://localhost:3000/dashboard/agents');
+    await page.waitForLoadState('networkidle');
+
+    await completeWalletPicker(page);
+
+    const beforeAgents = sqlite(`select count(*) from agents;`);
+    const beforeWallets = sqlite(`select count(*) from smart_wallets where owner='${PUBKEY}';`);
+    console.log(`[QA] DB before: agents=${beforeAgents} walletsForOwner=${beforeWallets}`);
+
+    await page.screenshot({ path: 'test-results/qa-08-before-wizard.png', fullPage: true });
+
+    const createBtn = page.locator('button:has-text("Create Agent")').first();
+    const enabled = await createBtn.isEnabled().catch(() => false);
+    console.log('[QA] Create Agent button enabled:', enabled);
+    if (!enabled) {
+      console.log('[QA] Cannot proceed — wallet likely never finished deploying (needs real on-chain smart-wallet deploy).');
+      console.log('[QA] Console errors:', consoleErrors);
+      console.log('[QA] Responses:', JSON.stringify(responses, null, 2));
+      return;
+    }
+    await createBtn.click();
+    await page.waitForTimeout(500);
+
+    const textarea = page.locator('textarea');
+    await textarea.fill('Grow my XLM over the long term while keeping risk low.');
+    await page.click('text=Analyze');
+    await page.waitForTimeout(3000);
+
+    for (let i = 0; i < 3; i++) {
+      const btn = page.locator('button:has-text("Continue")').first();
+      if (await btn.isVisible().catch(() => false)) { await btn.click(); await page.waitForTimeout(500); }
+    }
+
+    // Smart Wallet step
+    await page.screenshot({ path: 'test-results/qa-09-smart-wallet-step.png', fullPage: true });
+    const createWalletBtn = page.locator('button:has-text("Create Smart Wallet")');
+    if (await createWalletBtn.isVisible().catch(() => false)) {
+      console.log('[QA] No smart wallet found — clicking Create Smart Wallet (real on-chain deploy).');
+      await createWalletBtn.click();
+      await page.waitForTimeout(20_000);
+      await page.screenshot({ path: 'test-results/qa-10-after-deploy-attempt.png', fullPage: true });
+    }
+
+    // Funding step: the deployed smart wallet contract starts at 0 XLM — the wizard
+    // correctly blocks Continue until balance > 0 (no in-wizard fund button exists by
+    // design; real users fund externally, e.g. via the Trade/delegate flow). Extract the
+    // smart wallet C-address from the /connect/submit or /api/smart-wallets response
+    // captured above and fund it directly on testnet, mirroring app/lib/stellar.ts's
+    // transferXLMToContract, before proceeding — this is a deterministic UI-signal wait,
+    // not a raw sleep.
+    const smartWalletMatch = responses
+      .map((r) => r.body)
+      .filter((b): b is string => !!b)
+      .map((b) => { try { return JSON.parse(b); } catch { return null; } })
+      .find((j) => j && (j.smartWallet || (j.wallets && j.wallets[0]?.address)));
+    const smartWalletAddress = smartWalletMatch?.smartWallet || smartWalletMatch?.wallets?.[0]?.address;
+    if (smartWalletAddress) {
+      console.log('[QA] Funding smart wallet contract:', smartWalletAddress);
+      try {
+        const hash = await fundSmartWalletContract(kp, smartWalletAddress, '50');
+        console.log('[QA] Smart wallet funded, tx hash:', hash);
+      } catch (e: any) {
+        console.log('[QA] Smart wallet funding failed:', e.message);
+      }
+      const refreshBtn = page.locator('button:has-text("Refresh balance")');
+      if (await refreshBtn.isVisible().catch(() => false)) {
+        await refreshBtn.click();
+      }
+    } else {
+      console.log('[QA] Could not find smart wallet address in captured responses — skipping funding.');
+    }
+
+    // Note: no isEnabled()-then-click() pre-checks below. Playwright's .click() already
+    // auto-waits for the element to be visible+enabled+stable up to its timeout and retries
+    // the actionability check internally — a separate isEnabled() check followed by a
+    // click() call is a check-then-act race: app state (balance poll every 10s in
+    // useSmartWalletBalances, or a step transition) can flip the button between the two
+    // calls, so click() throws on a button that *was* enabled a moment ago. Swallowing that
+    // error made the harness silently skip steps and report "Continue failed" for what was
+    // actually just a timing gap in the test, not the app.
+    const continueAfterWallet = page.locator('button:has-text("Continue")').first();
+    await continueAfterWallet.click({ timeout: 20_000 });
+    console.log('[QA] Clicked Continue past Smart Wallet step.');
+    await expect(page.locator('text=Step 6 of 9')).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
+    await page.screenshot({ path: 'test-results/qa-11-approval-step.png', fullPage: true });
+
+    // Wizard has intermediate steps (e.g. "Review Plan") between Smart Wallet and the
+    // final Approve & Create step — keep advancing via Continue until Approve & Create
+    // shows up, bounded to avoid an infinite loop if something is genuinely stuck.
+    const approveBtn = page.locator('button:has-text("Approve & Create")');
+    for (let i = 0; i < 5 && !(await approveBtn.isVisible().catch(() => false)); i++) {
+      const nextContinue = page.locator('button:has-text("Continue")').first();
+      if (!(await nextContinue.isVisible().catch(() => false))) break;
+      await nextContinue.click({ timeout: 20_000 });
+      await expect(nextContinue).toHaveCount(0, { timeout: 10_000 }).catch(() => {});
+    }
+    await page.screenshot({ path: 'test-results/qa-11c-review-plan-step.png', fullPage: true });
+
+    if (await approveBtn.isVisible({ timeout: 10_000 }).catch(() => false)) {
+      await approveBtn.click({ timeout: 20_000 });
+      // Real backend provisioning (Policy, Smart Wallet init, Delegation, Runtime, Memory,
+      // Benchmark, Scheduler, Agent) plus on-chain agent funding can take well over a minute —
+      // wait for the wizard's terminal Success step (its "Open Mission Control" button, which only
+      // renders once createdAgent is set), not a fixed sleep. Also race an error surfacing in the
+      // wizard so a genuine provisioning failure fails fast with its message instead of hanging the
+      // full timeout. (The previous `text=Creating agent...` check matched ASCII dots against the
+      // UI's real unicode ellipsis "Creating agent…", so it always found 0 elements and returned
+      // instantly — tearing the page down mid-provision so nothing ever persisted.)
+      const success = page.getByRole('button', { name: /Open Mission Control/i });
+      const wizardError = page.locator('[class*="text-error"], [role="alert"]').filter({ hasText: /fail|error|not approved|rejected/i });
+      await expect(success.or(wizardError).first()).toBeVisible({ timeout: 180_000 });
+      await page.screenshot({ path: 'test-results/qa-12-creation-progress.png', fullPage: true });
+      if (!(await success.isVisible().catch(() => false))) {
+        const msg = await wizardError.first().textContent().catch(() => null);
+        throw new Error(`[QA] Agent creation failed in wizard: ${msg ?? 'unknown error'}`);
+      }
+    } else {
+      console.log('[QA] Approve & Create button never appeared after Continue clicks.');
+      await page.screenshot({ path: 'test-results/qa-11b-stuck-after-continue.png', fullPage: true });
+      throw new Error('[QA] Approve & Create never appeared — onboarding stuck, not a timing flake.');
+    }
+
+    console.log('[QA] Console errors:', consoleErrors);
+
+    const afterAgents = sqlite(`select count(*) from agents;`);
+    console.log(`[QA] DB after: agents=${afterAgents} (before=${beforeAgents})`);
+    // The whole point of this test: a real agent row must actually exist afterward.
+    expect(Number(afterAgents)).toBe(Number(beforeAgents) + 1);
+  });
+});

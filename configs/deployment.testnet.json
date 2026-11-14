@@ -1,0 +1,14 @@
+{
+  "network": "testnet",
+  "deployedAt": "2026-11-14T10:59:06.184Z",
+  "deployer": "GBS3MEU3ELLTJQIFU7JJCCKPH6OB54QKOE5AUPEOXKRHNRJ3WNPPO3EK",
+  "customAccountWasmHash": "4331eb59811ce18556ead7bff9b7bc1bb81c56cd9d29e629e2f406241b915b2d",
+  "transactions": {
+    "customAccountWasmUpload": "322a12747da800827f31c88fdcb8d059b1d87fc4218f034eb0ad244dacb93820",
+    "delegationManager": "c6170288d034e81023399c68443695e783f5eae36437dc5656913e923e082272",
+    "policyEngine": "76ff00991df875d40a3ace5ef397b85e25adf3684bdf694685b936622fdb6b98",
+    "customAccount": "5f22830bb5413a0e6d0b7838b911798cf8aa397bf0c3363b5c29d8764e443e07",
+    "registry": "29496d3e0888cbd34ea4b52b18b0f1253b92756b9aadda059e79d04e7e815d01",
+    "setPoliciesContract": "94600bd20b8029e2f2d9c40ea4ceaedd1c96fd084759124dd1a4bbbaa2869a11"
+  }
+}

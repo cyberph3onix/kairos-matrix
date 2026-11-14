@@ -1,0 +1,66 @@
+import type { Metadata } from "next";
+import "./globals.css";
+import { Geist, Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
+import { cn } from "@/lib/utils";
+import { Navbar } from "@/components/Navbar";
+import { ShaderBackground } from "@/components/ShaderBackground";
+import { WalletProvider } from "@/app/contexts/WalletContext";
+import { ModeProvider } from "@/app/contexts/ModeContext";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+const inter = Inter({subsets:['latin'],variable:'--font-body'});
+const spaceGrotesk = Space_Grotesk({subsets:['latin'],variable:'--font-display'});
+const jetbrainsMono = JetBrains_Mono({subsets:['latin'],variable:'--font-mono'});
+
+export const metadata: Metadata = {
+  title: "Kairos",
+  description:
+    "Autonomous portfolio management on Stellar.",
+  icons: {
+    icon: "/logo.png",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" className={cn("h-full", "font-sans", geist.variable, inter.variable, spaceGrotesk.variable, jetbrainsMono.variable)}>
+      <head>
+        <Script
+          id="suppress-extension-errors"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.addEventListener('error', function(e) {
+                if (e.filename && (e.filename.includes('chrome-extension://') || e.filename.includes('metamask'))) {
+                  e.stopImmediatePropagation();
+                }
+              }, true);
+              window.addEventListener('unhandledrejection', function(e) {
+                var stack = e.reason && e.reason.stack || '';
+                var msg = e.reason && e.reason.message || '';
+                if (stack.includes('chrome-extension://') || stack.includes('metamask') || msg.includes('MetaMask') || msg.includes('connect')) {
+                  e.stopImmediatePropagation();
+                  e.preventDefault();
+                }
+              }, true);
+            `,
+          }}
+        />
+      </head>
+      <body className="min-h-full bg-bg-primary text-text-primary antialiased">
+        <ShaderBackground />
+        <ModeProvider>
+          <WalletProvider>
+            <Navbar />
+            {children}
+          </WalletProvider>
+        </ModeProvider>
+      </body>
+    </html>
+  );
+}

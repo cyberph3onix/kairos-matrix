@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kairos Live Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12151a;
+    --panel-2: #171b21;
+    --line: #232832;
+    --text: #e6e9ee;
+    --muted: #8a93a3;
+    --faint: #5b6473;
+    --accent: #7aa2ff;
+    --up: #2fbf8a;
+    --down: #ef5a6f;
+    --warn: #e7b04a;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+  .num, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .brand { font-weight: 600; letter-spacing: .02em; font-size: 15px; }
+  .brand span { color: var(--muted); font-weight: 400; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .chip {
+    font: 500 11.5px var(--mono); padding: 4px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .chip.live .dot { background: var(--up); box-shadow: 0 0 0 3px rgba(47,191,138,.18); animation: pulse 1.6s infinite; }
+  .chip.warn { color: var(--warn); border-color: rgba(231,176,74,.35); }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px 20px 40px; max-width: 1500px; margin: 0 auto; }
+  @media (max-width: 1080px) { main { grid-template-columns: 1fr; padding: 12px 16px 32px; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .panel-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .panel-h h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .panel-h .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .panel-b { padding: 14px; }
+
+  /* Market hero */
+  .hero { display: flex; gap: 28px; align-items: flex-end; flex-wrap: wrap; padding: 16px 14px 10px; }
+  .price { font: 600 34px var(--mono); letter-spacing: -.02em; transition: color .4s; }
+  .price.flash-up { color: var(--up); } .price.flash-down { color: var(--down); }
+  .kv { display: flex; flex-direction: column; gap: 3px; }
+  .kv .k { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+  .kv .v { font: 500 14px var(--mono); }
+  .up { color: var(--up); } .down { color: var(--down); }
+  #chart { height: 340px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: var(--muted); font: 500 12px var(--mono); padding: 5px 10px; cursor: pointer; }
+  .seg button.on { background: var(--panel-2); color: var(--text); }
+  .indicators { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); border-top: 1px solid var(--line); }
+  .indicators .kv { padding: 10px 14px; border-right: 1px solid var(--line); }
+  .indicators .kv:last-child { border-right: 0; }
+
+  /* Agents */
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.primary {
+    background: var(--accent); color: #0b0d10; border: 0; border-radius: 7px; padding: 8px 14px;
+    font: 600 13px var(--sans); cursor: pointer;
+  }
+  button.primary:disabled { opacity: .5; cursor: progress; }
+  button.ghost { background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; font: 500 12.5px var(--sans); cursor: pointer; }
+  button.ghost:hover { color: var(--text); }
+  .toggle { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--accent); }
+  .agents { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 760px) { .agents { grid-template-columns: 1fr; } }
+  .agent { background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 210px; }
+  .agent .top { display: flex; align-items: center; gap: 8px; }
+  .agent .name { font-weight: 600; font-size: 13px; }
+  .agent .role { color: var(--faint); font-size: 11.5px; }
+  .badge { font: 600 11px var(--mono); padding: 3px 8px; border-radius: 5px; text-transform: uppercase; letter-spacing: .05em; background: var(--line); color: var(--muted); margin-left: auto; }
+  .badge.buy, .badge.reallocate { background: rgba(47,191,138,.15); color: var(--up); }
+  .badge.sell { background: rgba(239,90,111,.15); color: var(--down); }
+  .badge.rebalance { background: rgba(122,162,255,.15); color: var(--accent); }
+  .conf { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--muted); }
+  .bar { flex: 1; height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; position: relative; }
+  .bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; transition: width .5s; }
+  .bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--warn); }
+  .reasoning { color: #c3c9d3; font-size: 13px; line-height: 1.5; flex: 1; }
+  .meta { color: var(--faint); font: 11px var(--mono); display: flex; gap: 10px; flex-wrap: wrap; }
+  .thinking .reasoning { color: var(--muted); }
+  .shimmer { display: inline-block; width: 100%; height: 10px; border-radius: 4px; margin: 4px 0;
+    background: linear-gradient(90deg, var(--line) 0%, #2d3440 50%, var(--line) 100%); background-size: 200% 100%; animation: sh 1.2s infinite linear; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  .gate { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 12px; display: grid; gap: 6px; }
+  .gate-row { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; }
+  .gate-row .g { font: 600 11px var(--mono); width: 74px; flex: none; text-transform: uppercase; }
+  .gate-row .g.ok { color: var(--up); } .gate-row .g.no { color: var(--faint); }
+  .gate-row .who { color: var(--muted); width: 72px; flex: none; text-transform: capitalize; }
+
+  /* Intent */
+  textarea {
+    width: 100%; min-height: 84px; resize: vertical; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: 13px/1.45 var(--sans);
+  }
+  textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .spec { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-top: 12px; }
+  .intent-panel { border-color: rgba(122,162,255,.45); box-shadow: 0 0 0 1px rgba(122,162,255,.12); }
+  .intent-panel textarea { min-height: 70px; font-size: 14px; }
+  .examples { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .ex { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 4px 10px; font: 12px var(--sans); cursor: pointer; }
+  .ex:hover { color: var(--text); border-color: var(--accent); }
+  .spec { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important; }
+  .note { color: var(--faint); font-size: 12px; line-height: 1.45; }
+  .err { color: var(--down); font-size: 12.5px; margin-top: 8px; }
+
+  /* Portfolio */
+  .value { font: 600 28px var(--mono); }
+  .alloc { height: 10px; border-radius: 5px; background: rgba(122,162,255,.25); overflow: hidden; position: relative; margin: 10px 0 4px; }
+  .alloc i { position: absolute; inset: 0 auto 0 0; background: var(--accent); transition: width .6s; }
+  .alloc b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--warn); }
+  .legend { display: flex; justify-content: space-between; font: 11.5px var(--mono); color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+  .list { display: flex; flex-direction: column; max-height: 260px; overflow: auto; }
+  .row { display: flex; gap: 10px; padding: 7px 14px; border-bottom: 1px solid var(--line); font: 12px var(--mono); align-items: baseline; }
+  .row:last-child { border-bottom: 0; }
+  .row .t { color: var(--faint); width: 62px; flex: none; }
+  .row .s { width: 34px; flex: none; font-weight: 600; }
+  .row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--faint); padding: 16px 14px; font-size: 12.5px; }
+  .tape-row.new { animation: hl 1.2s ease-out; }
+  @keyframes hl { from { background: rgba(122,162,255,.12); } to { background: transparent; } }
+  footer { color: var(--faint); font-size: 12px; text-align: center; padding: 0 20px 28px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Kairos <span>· live agent demo</span></div>
+  <div class="chips">
+    <span class="chip live" id="chip-data"><span class="dot"></span><span>connecting…</span></span>
+    <span class="chip" id="chip-ai"><span class="dot"></span><span>AI: …</span></span>
+    <span class="chip warn">paper execution · no funds move</span>
+  </div>
+</header>
+
+<main>
+  <div class="col">
+    <section class="panel intent-panel">
+      <div class="panel-h"><h2>Step 1 · Tell the agent what you want</h2><div class="right"><span class="note">Gemini turns this into an agent + risk policy</span></div></div>
+      <div class="panel-b">
+        <textarea id="intent" placeholder="Type your goal in plain English, e.g. “Grow my portfolio steadily with moderate risk, focused on XLM.”"></textarea>
+        <div class="examples">
+          <span class="note">Try:</span>
+          <button class="ex" data-t="Grow my portfolio steadily with moderate risk, focused on XLM. Fully autonomous, small position sizes.">Steady growth</button>
+          <button class="ex" data-t="Protect my capital above all. Very low risk, mostly stablecoins, only trade on strong signals. Run autonomously.">Capital preservation</button>
+          <button class="ex" data-t="Aggressively grow my XLM exposure. High risk is fine, trade actively on momentum. Fully autonomous.">Aggressive XLM</button>
+        </div>
+        <div class="controls" style="margin-top:10px">
+          <button class="primary" id="parse">Create agent with Gemini</button>
+          <span class="note" id="parse-note"></span>
+        </div>
+        <div id="spec"></div>
+        <div class="err" id="intent-err" hidden></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <h2>XLM / USDC</h2>
+        <span class="chip" id="src-chip">stellar mainnet SDEX</span>
+        <div class="right">
+          <div class="seg" id="interval">
+            <button data-i="60">1m</button><button data-i="300" class="on">5m</button><button data-i="900">15m</button><button data-i="3600">1h</button>
+          </div>
+        </div>
+      </div>
+      <div class="hero">
+        <div class="kv"><span class="k">Last SDEX trade</span><span class="price" id="price">—</span></div>
+        <div class="kv"><span class="k">Window change</span><span class="v" id="chg">—</span></div>
+        <div class="kv"><span class="k">Binance XLMUSDT</span><span class="v" id="bn">—</span></div>
+        <div class="kv"><span class="k">SDEX vs Binance</span><span class="v" id="spread">—</span></div>
+        <div class="kv"><span class="k">Regime</span><span class="v" id="regime">—</span></div>
+      </div>
+      <div id="chart"></div>
+      <div class="indicators" id="ind"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Agents</h2>
+        <div class="right controls">
+          <label class="toggle"><input type="checkbox" id="auto" /> Autopilot (every 90s)</label>
+          <button class="primary" id="run">Run decision cycle</button>
+        </div>
+      </div>
+      <div class="panel-b">
+        <div class="agents" id="agents"></div>
+        <div class="gate" id="gate" hidden></div>
+        <div class="err" id="cycle-err" hidden></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="panel">
+      <div class="panel-h"><h2>Paper portfolio</h2><div class="right"><button class="ghost" id="reset">Reset</button></div></div>
+      <div class="panel-b">
+        <div class="kv"><span class="k">Value</span><span class="value" id="pv">—</span></div>
+        <div class="alloc"><i id="alloc-bar" style="width:50%"></i><b id="alloc-target" style="left:50%"></b></div>
+        <div class="legend"><span id="alloc-xlm">XLM —</span><span class="note">│ target</span><span id="alloc-usdc">USDC —</span></div>
+        <div class="grid2">
+          <div class="kv"><span class="k">P&amp;L</span><span class="v" id="pnl">—</span></div>
+          <div class="kv"><span class="k">vs buy &amp; hold</span><span class="v" id="vshold">—</span></div>
+          <div class="kv"><span class="k">Holdings</span><span class="v" id="hold">—</span></div>
+          <div class="kv"><span class="k">Policy</span><span class="v" id="pol">—</span></div>
+        </div>
+      </div>
+      <div class="panel-h" style="border-top:1px solid var(--line)"><h2>Fills</h2></div>
+      <div class="list" id="fills"><div class="empty">No trades yet — run a cycle.</div></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h"><h2>Live SDEX tape</h2><div class="right"><span class="note" id="tape-count">0 trades</span></div></div>
+      <div class="list" id="tape"><div class="empty">Waiting for the next mainnet XLM/USDC trade…</div></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  Market data is live: Stellar mainnet SDEX (Horizon) with Binance as an independent cross-check. Decisions come from Kairos's
+  production decision engine running on Gemini. A deterministic policy gate sizes and approves every trade, and fills go to an
+  in-memory paper portfolio. Yield-venue APYs are simulated.
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtP = (n) => (n == null || !isFinite(n) ? '—' : n.toFixed(n < 1 ? 5 : 2));
+const fmtUsd = (n) => (n == null || !isFinite(n) ? '—' : '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const signed = (n, d = 2, suf = '') => (n == null || !isFinite(n) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(d) + suf);
+const cls = (n) => (n >= 0 ? 'up' : 'down');
+const time = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+let interval = 300, lastSdex = null, lastBinance = null, tapeCount = 0, policy = null;
+
+// ── Chart ──
+const chart = LightweightCharts.createChart($('chart'), {
+  layout: { background: { color: 'transparent' }, textColor: '#8a93a3', fontFamily: 'JetBrains Mono' },
+  grid: { vertLines: { color: '#1a1e25' }, horzLines: { color: '#1a1e25' } },
+  rightPriceScale: { borderColor: '#232832' },
+  timeScale: { borderColor: '#232832', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: 0 },
+  autoSize: true,
+});
+const series = chart.addCandlestickSeries({
+  upColor: '#2fbf8a', downColor: '#ef5a6f', wickUpColor: '#2fbf8a', wickDownColor: '#ef5a6f', borderVisible: false,
+  priceFormat: { type: 'price', precision: 5, minMove: 0.00001 },
+});
+let candles = [];
+
+async function loadMarket() {
+  const r = await fetch('/api/demo/market?interval=' + interval);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'market fetch failed');
+  candles = j.candles.map((c) => ({ time: Math.floor(c.time / 1000), open: c.open, high: c.high, low: c.low, close: c.close }));
+  series.setData(candles);
+  chart.timeScale().fitContent();
+  $('src-chip').textContent = j.source === 'binance' ? 'binance (SDEX fallback)' : j.source.replace('stellar-', 'stellar ') + ' SDEX';
+  if (j.market) renderMarket(j.market);
+  if (lastSdex == null && j.market) setPrice(j.market.price);
+}
+
+function renderMarket(m) {
+  $('chg').innerHTML = `<span class="${cls(m.changePct)}">${signed(m.changePct, 2, '%')}</span>`;
+  $('regime').textContent = m.regime.regime.replace('_', ' ');
+  const i = m.indicators, g = m.regime;
+  const items = [
+    ['RSI 14', i.rsi.toFixed(1)], ['MACD hist', i.macd.histogram.toFixed(5)], ['EMA 20/50', `${i.ema20.toFixed(4)}/${i.ema50.toFixed(4)}`],
+    ['ATR 14', i.atr.toFixed(5)], ['ADX', g.trendStrength.toFixed(1)], ['Volatility', g.volatilityPct.toFixed(2) + '%'], ['Momentum', signed(g.momentum)],
+  ];
+  $('ind').innerHTML = items.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function setPrice(p) {
+  const el = $('price');
+  if (lastSdex != null && p !== lastSdex) {
+    el.classList.remove('flash-up', 'flash-down'); void el.offsetWidth;
+    el.classList.add(p > lastSdex ? 'flash-up' : 'flash-down');
+  }
+  lastSdex = p;
+  el.textContent = fmtP(p);
+  renderSpread();
+}
+
+function renderSpread() {
+  if (lastSdex == null || lastBinance == null) return;
+  const bps = (lastSdex / lastBinance - 1) * 10000;
+  $('spread').textContent = signed(bps, 1, ' bps');
+}
+
+function pushTradeToChart(t) {
+  if (!candles.length) return;
+  const bucket = Math.floor(t.at / 1000 / interval) * interval;
+  const last = candles[candles.length - 1];
+  if (bucket === last.time) {
+    last.high = Math.max(last.high, t.price); last.low = Math.min(last.low, t.price); last.close = t.price;
+    series.update(last);
+  } else if (bucket > last.time) {
+    const c = { time: bucket, open: last.close, high: Math.max(last.close, t.price), low: Math.min(last.close, t.price), close: t.price };
+    candles.push(c); series.update(c);
+  }
+}
+
+// ── Agents ──
+const AGENTS = [
+  ['strategic', 'Strategic', 'Selects a strategy for the regime and proposes BUY / SELL / HOLD'],
+  ['yield', 'Yield', 'Looks for a venue for idle USDC'],
+  ['balancer', 'Balancer', 'Holds the allocation near its target'],
+];
+function renderAgentShell() {
+  $('agents').innerHTML = AGENTS.map(([id, name, role]) => `
+    <div class="agent" id="ag-${id}">
+      <div class="top"><div><div class="name">${name} agent</div><div class="role">${role}</div></div><span class="badge">idle</span></div>
+      <div class="conf"><span>conf</span><div class="bar"><i style="width:0"></i></div><span class="cv">—</span></div>
+      <div class="reasoning note">Waiting for a decision cycle.</div>
+      <div class="meta"></div>
+    </div>`).join('');
+}
+function agentThinking(id) {
+  const el = $('ag-' + id); el.classList.add('thinking');
+  el.querySelector('.badge').className = 'badge'; el.querySelector('.badge').textContent = 'thinking';
+  el.querySelector('.reasoning').innerHTML = '<span class="shimmer"></span><span class="shimmer" style="width:85%"></span><span class="shimmer" style="width:60%"></span>';
+  el.querySelector('.meta').textContent = 'calling Gemini…';
+}
+function agentDecided(id, d) {
+  const el = $('ag-' + id); el.classList.remove('thinking');
+  const b = el.querySelector('.badge'); b.className = 'badge ' + d.action; b.textContent = d.action;
+  el.querySelector('.bar i').style.width = (d.confidence * 100).toFixed(0) + '%';
+  const bar = el.querySelector('.bar'); bar.querySelector('b')?.remove();
+  if (policy) { const m = document.createElement('b'); m.style.left = policy.minConfidence * 100 + '%'; m.title = 'policy minimum'; bar.appendChild(m); }
+  el.querySelector('.cv').textContent = (d.confidence * 100).toFixed(0) + '%';
+  el.querySelector('.reasoning').classList.remove('note');
+  el.querySelector('.reasoning').textContent = d.reasoning;
+  const bits = [];
+  if (d.selectedStrategy) bits.push('strategy: ' + d.selectedStrategy);
+  if (d.yieldVenue) bits.push('venue: ' + d.yieldVenue);
+  if (d.targetAllocation) bits.push(`target XLM ${d.targetAllocation.xlmPct.toFixed(0)}%`);
+  bits.push(d.model ? d.model : 'heuristic fallback (LLM unavailable)');
+  bits.push((d.latencyMs / 1000).toFixed(1) + 's');
+  el.querySelector('.meta').textContent = bits.join(' · ');
+}
+function renderGate(gate) {
+  const g = $('gate'); g.hidden = false;
+  g.innerHTML = '<div class="note" style="margin-bottom:2px">Policy gate (deterministic). Only an approved proposal becomes a fill.</div>' +
+    gate.map((v) => `<div class="gate-row"><span class="g ${v.approved ? 'ok' : 'no'}">${v.approved ? '✓ approved' : '— skipped'}</span><span class="who">${v.agent}</span><span>${esc(v.reason)}</span></div>`).join('');
+}
+
+let running = false;
+async function runCycle() {
+  if (running) return;
+  running = true; $('run').disabled = true; $('run').textContent = 'Agents thinking…'; $('cycle-err').hidden = true;
+  try {
+    const r = await fetch('/api/demo/cycle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ interval }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'cycle failed');
+    await loadPortfolio();
+  } catch (e) {
+    $('cycle-err').hidden = false; $('cycle-err').textContent = e.message;
+  } finally {
+    running = false; $('run').disabled = false; $('run').textContent = 'Run decision cycle';
+  }
+}
+
+// ── Intent ──
+document.querySelectorAll('.ex').forEach((b) => b.onclick = () => { $('intent').value = b.dataset.t; $('intent').focus(); });
+$('parse').onclick = async () => {
+  if (!$('intent').value.trim()) { $('intent-err').hidden = false; $('intent-err').textContent = 'Type a goal first, or pick an example.'; $('intent').focus(); return; }
+  const btn = $('parse'); btn.disabled = true; $('parse-note').textContent = 'Gemini is parsing your intent…'; $('intent-err').hidden = true;
+  try {
+    const r = await fetch('/api/demo/intent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: $('intent').value }) });
+    const j = await r.json();
+    if (j.status === 'ok') {
+      policy = j.policy; renderSpec(j.spec, j.policy); renderAgentShell(); $('gate').hidden = true;
+      $('parse-note').textContent = 'Agent created. Run a decision cycle.';
+      await loadPortfolio();
+    } else if (j.status === 'needs_clarification') {
+      $('parse-note').textContent = '';
+      $('intent-err').hidden = false; $('intent-err').innerHTML = 'Gemini needs more detail:<br>' + j.clarifyingQuestions.map((q) => '• ' + esc(q)).join('<br>');
+    } else {
+      throw new Error(j.error || 'intent parsing failed');
+    }
+  } catch (e) {
+    $('parse-note').textContent = ''; $('intent-err').hidden = false; $('intent-err').textContent = e.message;
+  } finally { btn.disabled = false; }
+};
+function renderSpec(s, p) {
+  $('spec').innerHTML = `<div class="spec">
+    <div class="kv"><span class="k">Mission</span><span class="v">${esc(s.mission)}</span></div>
+    <div class="kv"><span class="k">Objective</span><span class="v">${esc(s.objective)}</span></div>
+    <div class="kv"><span class="k">Risk</span><span class="v">${esc(s.riskLevel)}</span></div>
+    <div class="kv"><span class="k">Execution</span><span class="v">${esc(s.executionStyle)}</span></div>
+    <div class="kv"><span class="k">Parse confidence</span><span class="v">${(s.confidence * 100).toFixed(0)}%</span></div>
+    <div class="kv"><span class="k">Target XLM</span><span class="v">${p.targetXlmPct}%</span></div>
+  </div><p class="note">Policy derived from risk level: min confidence ${(p.minConfidence * 100).toFixed(0)}% · max ${p.maxTradePct}% of value per trade · rebalance band ±${p.driftPct}%.</p>`;
+}
+
+// ── Portfolio ──
+async function loadPortfolio() {
+  const j = await (await fetch('/api/demo/portfolio')).json();
+  policy = j.policy;
+  $('pol').textContent = `${j.policy.riskLevel} · ≥${(j.policy.minConfidence * 100).toFixed(0)}%`;
+  if (j.spec && !$('spec').innerHTML) renderSpec(j.spec, j.policy);
+  const v = j.valuation;
+  if (v) {
+    $('pv').textContent = fmtUsd(v.totalUsd);
+    $('pnl').innerHTML = `<span class="${cls(v.pnlUsd)}">${signed(v.pnlUsd)} (${signed(v.pnlPct, 2, '%')})</span>`;
+    $('vshold').innerHTML = `<span class="${cls(v.vsHoldUsd)}">${signed(v.vsHoldUsd)}</span>`;
+    $('hold').textContent = `${v.xlm.toFixed(1)} XLM · ${v.usdc.toFixed(2)} USDC`;
+    $('alloc-bar').style.width = v.xlmPct + '%';
+    $('alloc-target').style.left = j.policy.targetXlmPct + '%';
+    $('alloc-xlm').textContent = `XLM ${v.xlmPct.toFixed(1)}%`;
+    $('alloc-usdc').textContent = `USDC ${v.usdcPct.toFixed(1)}%`;
+  }
+  $('fills').innerHTML = j.fills.length
+    ? j.fills.map((f) => `<div class="row"><span class="t">${time(f.at)}</span><span class="s ${f.side === 'buy' ? 'up' : 'down'}">${f.side.toUpperCase()}</span><span class="grow">${f.xlm.toFixed(1)} XLM @ ${fmtP(f.price)} · ${esc(f.agent)}: ${esc(f.reason)}</span></div>`).join('')
+    : '<div class="empty">No trades yet. Run a cycle.</div>';
+}
+
+// ── Live stream ──
+function connect() {
+  const es = new EventSource('/api/demo/stream');
+  es.addEventListener('hello', () => { $('chip-data').classList.add('live'); $('chip-data').lastElementChild.textContent = 'live · stellar mainnet'; });
+  es.addEventListener('trade', (e) => {
+    const t = JSON.parse(e.data);
+    setPrice(t.price); pushTradeToChart(t);
+    tapeCount++; $('tape-count').textContent = tapeCount + ' trades';
+    const tape = $('tape'); tape.querySelector('.empty')?.remove();
+    const row = document.createElement('div'); row.className = 'row tape-row new';
+    row.innerHTML = `<span class="t">${time(t.at)}</span><span class="s ${t.side === 'buy' ? 'up' : 'down'}">${t.side === 'buy' ? 'BUY' : 'SELL'}</span><span class="grow">${t.xlm.toLocaleString(undefined, { maximumFractionDigits: 1 })} XLM @ ${fmtP(t.price)}</span>`;
+    tape.prepend(row); while (tape.children.length > 60) tape.lastChild.remove();
+  });
+  es.addEventListener('ticker', (e) => {
+    const t = JSON.parse(e.data); lastBinance = t.price;
+    $('bn').innerHTML = `${fmtP(t.price)} <span class="${cls(t.change24hPct)}" style="font-size:12px">${signed(t.change24hPct, 2, '%')}</span>`;
+    renderSpread();
+  });
+  es.addEventListener('cycle', (e) => {
+    const c = JSON.parse(e.data);
+    if (c.phase === 'market') renderMarket(c.market);
+    if (c.phase === 'thinking') agentThinking(c.agent);
+    if (c.phase === 'decided') agentDecided(c.agent, c.decision);
+    if (c.phase === 'done') { renderGate(c.record.gate); loadPortfolio(); }
+    if (c.phase === 'error') { $('cycle-err').hidden = false; $('cycle-err').textContent = c.error; }
+  });
+  es.onerror = () => { $('chip-data').classList.remove('live'); $('chip-data').lastElementChild.textContent = 'reconnecting…'; };
+}
+
+// ── Wiring ──
+document.querySelectorAll('#interval button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('#interval button').forEach((x) => x.classList.toggle('on', x === b));
+  interval = Number(b.dataset.i); loadMarket().catch(console.error);
+});
+$('run').onclick = runCycle;
+$('reset').onclick = async () => { await fetch('/api/demo/reset', { method: 'POST' }); await loadPortfolio(); };
+let autoTimer = null;
+$('auto').onchange = (e) => {
+  clearInterval(autoTimer);
+  if (e.target.checked) { runCycle(); autoTimer = setInterval(runCycle, 90_000); }
+};
+
+(async function boot() {
+  renderAgentShell();
+  connect();
+  const s = await (await fetch('/api/demo/status')).json();
+  const ai = $('chip-ai');
+  if (s.geminiConfigured) { ai.classList.add('live'); ai.lastElementChild.textContent = 'AI: ' + s.geminiModel; }
+  else { ai.classList.add('warn'); ai.lastElementChild.textContent = 'AI: no GEMINI_API_KEY (heuristic)'; }
+  try { await loadMarket(); } catch (e) { $('cycle-err').hidden = false; $('cycle-err').textContent = e.message; }
+  await loadPortfolio();
+  setInterval(() => loadMarket().catch(() => {}), 60_000);
+})();
+</script>
+</body>
+</html>

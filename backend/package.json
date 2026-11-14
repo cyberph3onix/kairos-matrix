@@ -1,0 +1,54 @@
+{
+  "name": "@wolf1276/kairos-agent-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Custodial agent-wallet runtime: generates and holds agent keypairs, runs their scheduled spend strategy against an attached Kairos delegation, exposed via a REST API.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsup",
+    "migrate:wallet-delegations": "tsx scripts/migrate-wallet-delegations.ts",
+    "test": "vitest run",
+    "benchmark": "tsx benchmarks/reasoning/runners/cli.ts",
+    "benchmark:reasoning": "tsx benchmarks/reasoning/runners/cli.ts",
+    "benchmark:model": "tsx benchmarks/reasoning/runners/cli.ts --model",
+    "benchmark:provider": "tsx benchmarks/reasoning/runners/cli.ts --provider",
+    "benchmark:e2e": "tsx benchmarks/e2e/runners/cli.ts all",
+    "benchmark:determinism": "tsx benchmarks/e2e/runners/cli.ts determinism",
+    "benchmark:concurrency": "tsx benchmarks/e2e/runners/cli.ts concurrency",
+    "benchmark:reliability": "tsx benchmarks/e2e/runners/cli.ts reliability",
+    "benchmark:performance": "tsx benchmarks/e2e/runners/cli.ts performance",
+    "demo:live": "tsx --env-file=.env demo/server.ts"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@kairos/types": "workspace:^",
+    "@stellar/stellar-sdk": "^14.6.1",
+    "@wolf1276/kairos-sdk": "workspace:^",
+    "@wolf1276/kairos-turnkey-signer": "workspace:^",
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.22.0",
+    "technicalindicators": "^3.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
+    "pg-mem": "^3.0.14",
+    "tsup": "^8.0.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0",
+    "vitest": "^1.6.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

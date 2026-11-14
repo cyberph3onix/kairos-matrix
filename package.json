@@ -1,0 +1,23 @@
+{
+  "name": "kairos-matrix",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build:packages": "pnpm --filter @wolf1276/kairos-sdk build && pnpm --filter @wolf1276/kairos-turnkey-signer build",
+    "dev": "pnpm build:packages && concurrently -n backend,web -c cyan,magenta \"pnpm --filter @wolf1276/kairos-agent-backend dev\" \"pnpm --filter app dev\"",
+    "build": "pnpm build:packages && pnpm --filter @wolf1276/kairos-agent-backend build && pnpm --filter app build",
+    "start": "concurrently -n backend,web \"pnpm --filter @wolf1276/kairos-agent-backend start\" \"pnpm --filter app start\"",
+    "deploy:testnet": "tsx scripts/deploy-testnet.ts",
+    "e2e:smart-wallet": "tsx scripts/e2e-smart-wallet.ts",
+    "demo:live": "pnpm --filter @wolf1276/kairos-agent-backend demo:live",
+    "test": "pnpm --filter @wolf1276/kairos-sdk test && pnpm --filter @wolf1276/kairos-agent-backend test && pnpm --filter app test"
+  },
+  "devDependencies": {
+    "@stellar/stellar-sdk": "^14.6.1",
+    "@types/node": "^20.0.0",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.0.0"
+  }
+}
