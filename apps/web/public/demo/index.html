@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <script src="https://unpkg.com/@stellar/freighter-api@6.0.1/build/index.min.js"></script>
+<script src="https://unpkg.com/@stellar/stellar-sdk@14.6.1/dist/stellar-sdk.min.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
@@ -206,6 +207,7 @@
       <div class="panel-b">
         <div class="agents" id="agents"></div>
         <div class="gate" id="gate" hidden></div>
+        <div class="gate" id="proposal" hidden></div>
         <div class="err" id="cycle-err" hidden></div>
       </div>
     </section>
@@ -431,6 +433,8 @@ async function loadPortfolio() {
     $('alloc-xlm').textContent = `XLM ${v.xlmPct.toFixed(1)}%`;
     $('alloc-usdc').textContent = `USDC ${v.usdcPct.toFixed(1)}%`;
   }
+  window.latestFill = j.fills.length ? j.fills.reduce((a, b) => (b.at > a.at ? b : a)) : null;
+  if (window.renderProposal) window.renderProposal();
   $('fills').innerHTML = j.fills.length
     ? j.fills.map((f) => `<div class="row"><span class="t">${time(f.at)}</span><span class="s ${f.side === 'buy' ? 'up' : 'down'}">${f.side.toUpperCase()}</span><span class="grow">${f.xlm.toFixed(1)} XLM @ ${fmtP(f.price)} · ${esc(f.agent)}: ${esc(f.reason)}</span></div>`).join('')
     : '<div class="empty">No trades yet. Run a cycle.</div>';
@@ -506,6 +510,7 @@ $('auto').onchange = (e) => {
       if (acc.error || !acc.address) throw new Error((acc.error && acc.error.message) || acc.error || 'Access denied');
       const net = await api.getNetworkDetails();
       if (net && net.networkPassphrase && net.networkPassphrase !== TESTNET) throw new Error('Switch Freighter to Testnet');
+      window.fwAddress = acc.address; if (window.renderProposal) window.renderProposal();
       btn.textContent = 'Freighter · Testnet · ' + short(acc.address);
       btn.title = acc.address;
     } catch (e) {
@@ -513,6 +518,52 @@ $('auto').onchange = (e) => {
     } finally { btn.disabled = false; }
   }
   btn.addEventListener('click', connect);
+})();
+</script>
+<script>
+// ── On-chain proposal: turn the latest policy-approved paper fill into a real Stellar TESTNET
+// transaction (a manageData entry recording the trade) that the user signs in Freighter.
+(function () {
+  const TESTNET = 'Test SDF Network ; September 2015';
+  const HORIZON = 'https://horizon-testnet.stellar.org';
+  const box = document.getElementById('proposal');
+  let built = null;
+  const say = (html) => { box.hidden = false; box.innerHTML = html; };
+  window.renderProposal = function () {
+    const f = window.latestFill;
+    if (!f) { box.hidden = true; return; }
+    const addr = window.fwAddress;
+    say('<div class="note" style="margin-bottom:6px">Proposed transaction (Stellar Testnet) · from the latest approved fill</div>' +
+      '<div class="gate-row"><span class="g ok">' + f.side.toUpperCase() + '</span><span class="who">' + f.xlm.toFixed(1) + ' XLM</span><span>@ ' + f.price.toFixed(5) + ' · ' + esc(f.agent) + '</span></div>' +
+      (addr
+        ? '<button id="px-build" class="chip" style="cursor:pointer;margin-top:8px">Build &amp; sign with Freighter</button>'
+        : '<div class="note" style="margin-top:6px">Connect Freighter (top right) to turn this into a signable Testnet transaction.</div>') +
+      '<div id="px-out" class="note" style="margin-top:6px;word-break:break-all"></div>');
+    const b = document.getElementById('px-build'); if (b) b.onclick = () => propose(f);
+  };
+  async function propose(f) {
+    const out = document.getElementById('px-out'); const b = document.getElementById('px-build');
+    const S = window.StellarSdk, api = window.freighterApi;
+    try {
+      if (!S || !api) throw new Error('Stellar/Freighter libraries failed to load');
+      b.disabled = true; out.textContent = 'Loading your Testnet account…';
+      const server = new S.Horizon.Server(HORIZON);
+      let account;
+      try { account = await server.loadAccount(window.fwAddress); }
+      catch (e) { throw new Error('Account not funded on Testnet. Fund it at https://friendbot.stellar.org/?addr=' + window.fwAddress); }
+      const note = (f.side.toUpperCase() + ' ' + f.xlm.toFixed(1) + ' XLM @' + f.price.toFixed(5) + ' #' + f.id).slice(0, 64);
+      const tx = new S.TransactionBuilder(account, { fee: '100', networkPassphrase: TESTNET })
+        .addOperation(S.Operation.manageData({ name: 'kairos:proposal', value: note }))
+        .setTimeout(180).build();
+      out.innerHTML = 'Unsigned XDR built · op: manageData <b>kairos:proposal</b> = “' + esc(note) + '”<br>Approve it in the Freighter popup…';
+      const signed = await api.signTransaction(tx.toXDR(), { networkPassphrase: TESTNET, address: window.fwAddress });
+      if (signed.error) throw new Error((signed.error && signed.error.message) || signed.error);
+      const res = await server.submitTransaction(S.TransactionBuilder.fromXDR(signed.signedTxXdr, TESTNET));
+      out.innerHTML = '✓ Submitted on Testnet · <a href="https://stellar.expert/explorer/testnet/tx/' + res.hash + '" target="_blank" rel="noopener">' + res.hash.slice(0, 16) + '…</a>';
+    } catch (e) {
+      out.textContent = 'Not submitted: ' + String((e && e.message) || e);
+    } finally { if (b) b.disabled = false; }
+  }
 })();
 </script>
 </body>
