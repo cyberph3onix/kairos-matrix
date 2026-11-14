@@ -4,6 +4,9 @@ import path from "path";
 const nextConfig: NextConfig = {
   output: "standalone",
   transpilePackages: ["three", "@react-three/fiber", "shadergradient"],
+  async redirects() {
+    return [{ source: "/app", destination: "/dashboard", permanent: false }];
+  },
   async rewrites() {
     // The live demo is a static page (public/demo/index.html) served at /demo, so the root
     // layout's Navbar / ShaderBackground never wrap it.
