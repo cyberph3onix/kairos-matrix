@@ -172,7 +172,7 @@ export async function kitListWallets(): Promise<KitWalletOption[]> {
           id: "freighter",
           name: "Freighter",
           icon: "https://stellar.creit.tech/wallet-icons/freighter.png",
-          isAvailable: w.isAvailable,
+          isAvailable: true, // never block: detection is unreliable; connecting surfaces real errors
         });
         freighterAdded = true;
       }
@@ -200,7 +200,7 @@ export async function kitListWallets(): Promise<KitWalletOption[]> {
       id: "freighter",
       name: "Freighter",
       icon: "https://stellar.creit.tech/wallet-icons/freighter.png",
-      isAvailable: isAvail,
+      isAvailable: true,
     });
   }
 
@@ -220,6 +220,17 @@ export async function kitConnectWallet(id: string): Promise<string> {
     if (found) targetId = found.productId;
   }
   kit.setWallet(targetId);
+  if (id === "freighter" || id === "varial") {
+    // Ask the Freighter extension directly: gives clear errors and works even when the kit's
+    // own availability probe misreports.
+    const api = await import("@stellar/freighter-api");
+    const res = await api.requestAccess();
+    if (res.error || !res.address) {
+      const msg = typeof res.error === "string" ? res.error : (res.error as any)?.message;
+      throw new Error(msg || "Freighter did not return an address. Unlock Freighter, allow this site, and try again.");
+    }
+    return res.address;
+  }
   const { address } = await kit.fetchAddress();
   return address;
 }

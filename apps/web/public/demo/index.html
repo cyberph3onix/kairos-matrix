@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/@stellar/freighter-api@6.0.1/build/index.min.js"></script>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
@@ -148,6 +149,7 @@
     <span class="chip live" id="chip-data"><span class="dot"></span><span>connecting…</span></span>
     <span class="chip" id="chip-ai"><span class="dot"></span><span>AI: …</span></span>
     <span class="chip warn">paper execution · no funds move</span>
+    <button id="fw-btn" class="chip" style="cursor:pointer;background:transparent" title="Connect Freighter (Stellar Testnet)">Connect Freighter</button>
   </div>
 </header>
 
@@ -486,6 +488,31 @@ $('auto').onchange = (e) => {
   try { await loadMarket(); } catch (e) { $('cycle-err').hidden = false; $('cycle-err').textContent = e.message; }
   await loadPortfolio();
   setInterval(() => loadMarket().catch(() => {}), 60_000);
+})();
+</script>
+<script>
+(function () {
+  const btn = document.getElementById('fw-btn');
+  const TESTNET = 'Test SDF Network ; September 2015';
+  const short = (a) => a.slice(0, 4) + '…' + a.slice(-4);
+  async function connect() {
+    const api = window.freighterApi;
+    if (!api) { btn.textContent = 'Freighter lib failed to load'; return; }
+    btn.disabled = true; btn.textContent = 'Connecting…';
+    try {
+      const c = await api.isConnected();
+      if (!c || !c.isConnected) { window.open('https://www.freighter.app/', '_blank'); throw new Error('Install Freighter, then reload'); }
+      const acc = await api.requestAccess();
+      if (acc.error || !acc.address) throw new Error((acc.error && acc.error.message) || acc.error || 'Access denied');
+      const net = await api.getNetworkDetails();
+      if (net && net.networkPassphrase && net.networkPassphrase !== TESTNET) throw new Error('Switch Freighter to Testnet');
+      btn.textContent = 'Freighter · Testnet · ' + short(acc.address);
+      btn.title = acc.address;
+    } catch (e) {
+      btn.textContent = String((e && e.message) || e); setTimeout(() => { btn.textContent = 'Connect Freighter'; }, 4000);
+    } finally { btn.disabled = false; }
+  }
+  btn.addEventListener('click', connect);
 })();
 </script>
 </body>
