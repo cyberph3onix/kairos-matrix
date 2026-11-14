@@ -32,8 +32,22 @@ async function loadKit() {
 
   if (!initialized) {
     initialized = true;
+
+    // Wrap FreighterModule with productId "freighter" and proper product display
+    // so both "freighter" and "varial" ids resolve to Freighter in the kit.
+    class CustomFreighterModule extends FreighterModule {
+      constructor() {
+        super();
+        this.productId = "freighter";
+        this.productName = "Freighter";
+        this.productUrl = "https://www.freighter.app";
+        this.productIcon = "https://stellar.creit.tech/wallet-icons/freighter.png";
+      }
+    }
+
     StellarWalletsKit.init({
       modules: [
+        new CustomFreighterModule(),
         new FreighterModule(),
         new AlbedoModule(),
         new xBullModule(),
@@ -69,6 +83,25 @@ export async function kitGetAddress(): Promise<string> {
 }
 
 export async function kitGetNetwork(): Promise<{ network: string; networkPassphrase: string }> {
+  try {
+    const { getNetworkDetails, getNetwork } = await import("@stellar/freighter-api");
+    const details = await getNetworkDetails().catch(() => null);
+    if (details && !details.error && details.networkPassphrase) {
+      return {
+        network: details.network || "TESTNET",
+        networkPassphrase: details.networkPassphrase,
+      };
+    }
+    const net = await getNetwork().catch(() => null);
+    if (net && !net.error && net.networkPassphrase) {
+      return {
+        network: net.network || "TESTNET",
+        networkPassphrase: net.networkPassphrase,
+      };
+    }
+  } catch {
+    // fallback to kit
+  }
   const kit = await loadKit();
   return kit.getNetwork();
 }
@@ -118,18 +151,75 @@ export interface KitWalletOption {
 }
 
 /** Lists every wallet the kit knows about (Freighter/Albedo/xBull/etc.) along with whether each
- *  is actually installed/available right now — powers our own connect-wallet picker UI. */
+ *  is actually installed/available right now — powers our own connect-wallet picker UI.
+ *  Freighter (Testnet) is always mapped properly and sorted to the top. */
 export async function kitListWallets(): Promise<KitWalletOption[]> {
   const kit = await loadKit();
-  const wallets = await kit.refreshSupportedWallets();
-  return wallets.map((w) => ({ id: w.id, name: w.name, icon: w.icon, isAvailable: w.isAvailable }));
+  const rawWallets = await kit.refreshSupportedWallets();
+  const wallets: KitWalletOption[] = [];
+  let freighterAdded = false;
+
+  for (const w of rawWallets) {
+    const isFreighter =
+      w.id === "freighter" ||
+      w.id === "varial" ||
+      w.name?.toLowerCase().includes("freighter") ||
+      w.name?.toLowerCase().includes("varial");
+
+    if (isFreighter) {
+      if (!freighterAdded) {
+        wallets.unshift({
+          id: "freighter",
+          name: "Freighter",
+          icon: "https://stellar.creit.tech/wallet-icons/freighter.png",
+          isAvailable: w.isAvailable,
+        });
+        freighterAdded = true;
+      }
+    } else {
+      wallets.push({
+        id: w.id,
+        name: w.name,
+        icon: w.icon,
+        isAvailable: w.isAvailable,
+      });
+    }
+  }
+
+  // Ensure Freighter is always present at index 0 even if the kit failed to enumerate it
+  if (!freighterAdded) {
+    let isAvail = false;
+    try {
+      const { isConnected } = await import("@stellar/freighter-api");
+      const res = await isConnected();
+      isAvail = !res.error && !!res.isConnected;
+    } catch {
+      isAvail = typeof window !== "undefined" && !!(window as any).freighter;
+    }
+    wallets.unshift({
+      id: "freighter",
+      name: "Freighter",
+      icon: "https://stellar.creit.tech/wallet-icons/freighter.png",
+      isAvailable: isAvail,
+    });
+  }
+
+  return wallets;
 }
 
 /** Selects a wallet by id and prompts it for the user's address — the same two calls the kit's
  *  own built-in modal makes internally when a wallet row is clicked. */
 export async function kitConnectWallet(id: string): Promise<string> {
   const kit = await loadKit();
-  kit.setWallet(id);
+  let targetId = id;
+  if (id === "freighter" || id === "varial") {
+    const activeMods: any[] = (kit as any).activeModules?.value ?? [];
+    const found =
+      activeMods.find((m) => m.productId === "freighter") ||
+      activeMods.find((m) => m.productId === "varial");
+    if (found) targetId = found.productId;
+  }
+  kit.setWallet(targetId);
   const { address } = await kit.fetchAddress();
   return address;
 }

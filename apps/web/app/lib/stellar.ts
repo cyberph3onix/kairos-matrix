@@ -87,6 +87,10 @@ export async function tryCheckConnection(): Promise<boolean> {
   if (!isBrowser()) return false;
   try {
     await kitGetAddress();
+    const net = await kitGetNetwork();
+    if (net.networkPassphrase && net.networkPassphrase !== Networks.TESTNET) {
+      return false;
+    }
     return true;
   } catch {
     return false;
@@ -267,7 +271,17 @@ export async function connectWallet(address: string): Promise<ConnectResult> {
       },
     };
   }
-  const isTestnet = networkKey === "TESTNET" || networkKey === "FUTURENET";
+  // Enforce Stellar Testnet
+  if (networkPassphrase !== Networks.TESTNET) {
+    return {
+      success: false,
+      error: {
+        kind: "network-error",
+        message: `Freighter is currently on ${networkKey || networkPassphrase}. Kairos requires Stellar Testnet. Please open Freighter, switch network to Testnet (Settings > Network > Testnet), and try connecting again.`,
+      },
+    };
+  }
+  const isTestnet = true;
   const sorobanRpcUrl = SOROBAN_RPC_URLS[networkPassphrase];
   if (!sorobanRpcUrl) {
     return {

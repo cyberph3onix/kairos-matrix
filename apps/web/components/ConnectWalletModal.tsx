@@ -100,7 +100,7 @@ export function ConnectWalletModal({ open, connecting, error, onClose, onPick }:
                 <img src={pendingWallet.icon} alt="" className="h-8 w-8 rounded-full" />
                 <div>
                   <p className="text-sm font-semibold text-white">Connect to {pendingWallet.name}</p>
-                  <p className="text-[11px] text-white/40">Kairos will request:</p>
+                  <p className="text-[11px] font-medium text-accent">Stellar Testnet</p>
                 </div>
               </div>
               <ul className="mb-5 space-y-2 text-xs text-white/60">
@@ -118,7 +118,7 @@ export function ConnectWalletModal({ open, connecting, error, onClose, onPick }:
                 </li>
               </ul>
               <p className="mb-4 text-[11px] text-white/30">
-                Kairos never sees or stores your secret key — {pendingWallet.name} keeps it and signs locally.
+                Kairos never sees or stores your secret key — {pendingWallet.name} keeps it and signs locally on Stellar Testnet.
               </p>
               <div className="flex gap-2">
                 <button
@@ -143,17 +143,27 @@ export function ConnectWalletModal({ open, connecting, error, onClose, onPick }:
             <ul className="space-y-1">
               {wallets.map((w) => {
                 const isActive = connecting && activeWalletId === w.id;
+                const isFreighter = w.id === "freighter";
                 return (
                   <li key={w.id}>
                     <button
                       disabled={!w.isAvailable || connecting}
                       onClick={() => setPendingWallet(w)}
-                      className="flex w-full items-center justify-between rounded-lg px-2 py-2.5 transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+                      className={`flex w-full items-center justify-between rounded-lg px-2 py-2.5 transition-colors duration-150 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50 ${
+                        isFreighter ? "bg-white/[0.02] border border-accent/20" : ""
+                      }`}
                     >
                       <span className="flex items-center gap-3">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={w.icon} alt="" className="h-6 w-6 rounded-full" />
-                        <span className="text-sm font-medium text-white">{w.name}</span>
+                        <span className="flex items-center gap-2 text-sm font-medium text-white">
+                          {w.name}
+                          {isFreighter && (
+                            <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[9px] font-semibold text-accent uppercase tracking-wider">
+                              Testnet
+                            </span>
+                          )}
+                        </span>
                       </span>
                       {isActive ? (
                         <span className="flex items-center gap-1.5 text-[10px] text-white/50">
@@ -161,9 +171,21 @@ export function ConnectWalletModal({ open, connecting, error, onClose, onPick }:
                           Connecting…
                         </span>
                       ) : !w.isAvailable ? (
-                        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/40">
-                          Not available
-                        </span>
+                        isFreighter ? (
+                          <a
+                            href="https://www.freighter.app/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="rounded-md border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] text-accent hover:bg-accent/20"
+                          >
+                            Install
+                          </a>
+                        ) : (
+                          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/40">
+                            Not available
+                          </span>
+                        )
                       ) : null}
                     </button>
                   </li>
