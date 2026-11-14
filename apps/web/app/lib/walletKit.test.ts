@@ -55,6 +55,7 @@ vi.mock("@creit.tech/stellar-wallets-kit/modules/klever", () => ({
 
 vi.mock("@stellar/freighter-api", () => ({
   isConnected: vi.fn().mockResolvedValue({ isConnected: true }),
+  requestAccess: vi.fn().mockResolvedValue({ address: "GBDRXBYI7UWYP6EIXDAIIRWHP7RK4AZNXR7U7BGWQ7VHVURFAZGYHJXK" }),
   getNetwork: vi.fn().mockResolvedValue({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
   getNetworkDetails: vi.fn().mockResolvedValue({ network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" }),
 }));
@@ -80,11 +81,11 @@ describe("walletKit Freighter integration", () => {
     expect(wallets[1].id).toBe("albedo");
   });
 
-  it("kitConnectWallet('freighter') resolves target module id and fetches address", async () => {
+  it("kitConnectWallet('freighter') selects the kit module and gets the address from Freighter directly", async () => {
     const address = await kitConnectWallet("freighter");
     expect(address).toBe("GBDRXBYI7UWYP6EIXDAIIRWHP7RK4AZNXR7U7BGWQ7VHVURFAZGYHJXK");
     expect(setWalletMock).toHaveBeenCalledWith("freighter");
-    expect(fetchAddressMock).toHaveBeenCalled();
+    expect(fetchAddressMock).not.toHaveBeenCalled();
   });
 
   it("kitGetNetwork returns Freighter testnet details", async () => {
